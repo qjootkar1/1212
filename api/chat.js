@@ -1,24 +1,15 @@
-// ============================================================
-//  AI Pipeline — api/chat.js (즉시 응답 & 타임아웃 방어 전체 코드)
-// ============================================================
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const config = { runtime: 'edge' };
 
-const QWEN_SYSTEM = `시니어 개발자입니다. 초안 코드만 아주 간결하게 작성하세요.`;
-const GEMINI_SYSTEM = `당신은 시니어 소프트웨어 엔지니어입니다. 
-초안이 없더라도 사용자 요청을 분석하여 직접 완성된 코드를 출력하세요. 
-최종 답변만 작성하며, 테스트 코드를 포함하세요.`;
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-function stripThinking(text) {
-  if (!text) return "";
-  return text.replace(/\[사고 과정\][\s\S]*?\[\/사고 과정\]/g, '').replace(/\[답변\]/g, '').trim();
-}
+const QWEN_SYSTEM = `당신은 시니어 개발자입니다. 사용자 요청에 대해 구현해야 할 핵심 로직과 주의사항을 3줄 이내로 요약하세요.`;
+const GEMINI_SYSTEM = `당신은 10년 경력의 시니어 엔지니어입니다. 
+전달받은 가이드를 바탕으로 사용자의 요구사항을 완벽하게 충족하는 '매우 상세하고 긴' 전체 코드를 작성하세요. 
+주석을 풍부하게 달고, 테스트 케이스와 실행 방법까지 상세히 포함하세요.`;
 
-// ✅ Qwen 호출 함수: 타임아웃 15초 적용 (무료 모델 대기열 방어)
-async function callQwen(messages, apiKey, referer) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15초 지나면 포기
-
+async function getQwenDraft(messages, apiKey, referer) {
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -30,48 +21,23 @@ async function callQwen(messages, apiKey, referer) {
       body: JSON.stringify({
         model: 'qwen/qwen-2.5-72b-instruct:free',
         messages,
-        max_tokens: 1000,
+        max_tokens: 300,
         temperature: 0.3,
       }),
-      signal: controller.signal,
     });
-    clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
       return data.choices[0].message.content;
     }
-  } catch (err) {
-    console.error("Qwen Skip (Timeout or Error)");
-  }
-  return null;
-}
-
-async function callGemini(systemPrompt, userMessage, apiKey) {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ parts: [{ text: userMessage }] }],
-        generationConfig: { maxOutputTokens: 6000, temperature: 0.2 },
-      }),
-    }
-  );
-  if (!res.ok) throw new Error("Gemini API Error");
-  const data = await res.json();
-  return data.candidates[0].content.parts[0].text;
+  } catch (e) { return "직접 상세 구현 필요"; }
+  return "직접 상세 구현 필요";
 }
 
 export default async function handler(req) {
-  if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: { 'Access-Control-Allow-Origin': '*' } });
-
   const { messages } = await req.json();
-  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  const referer = req.headers.get('origin') || 'http://localhost:3000';
   const userMessage = messages[messages.length - 1].content;
+  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+  const referer = req.headers.get('origin') || 'http://localhost:3000';
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -79,17 +45,24 @@ export default async function handler(req) {
       const send = (data) => controller.enqueue(enc.encode(`data: ${JSON.stringify(data)}\n\n`));
 
       try {
-        // 1. Qwen 시도 (15초 안에 안 나오면 바로 넘김)
-        send({ stage: 'qwen_start', message: '🧠 전략 구상 중 (빠른 모드)...' });
-        const qwenRaw = await callQwen([{ role: 'system', content: QWEN_SYSTEM }, { role: 'user', content: userMessage }], OPENROUTER_API_KEY, referer);
-        const qwenDraft = stripThinking(qwenRaw);
+        send({ stage: 'qwen_start', message: '🏗️ 설계 중...' });
+        const qwenGuide = await getQwenDraft([{ role: 'system', content: QWEN_SYSTEM }, { role: 'user', content: userMessage }], OPENROUTER_API_KEY, referer);
 
-        // 2. Gemini 즉시 개입
-        send({ stage: 'gemini_start', message: '🔍 코드 완성 및 검증 중...' });
-        const geminiInput = `요청: ${userMessage}\n\n초안: ${qwenDraft || "없음(직접 작성 요망)"}`;
-        const final = await callGemini(GEMINI_SYSTEM, geminiInput, GEMINI_API_KEY);
+        send({ stage: 'gemini_start', message: '🚀 코드 스트리밍 중...' });
+        
+        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        const result = await model.generateContentStream({
+          contents: [{ role: 'user', parts: [{ text: `${GEMINI_SYSTEM}\n\n요청: ${userMessage}\n가이드: ${qwenGuide}` }] }],
+        });
 
-        send({ stage: 'done', final });
+        let fullText = "";
+        for await (const chunk of result.stream) {
+          const chunkText = chunk.text();
+          fullText += chunkText;
+          send({ stage: 'streaming', chunk: chunkText });
+        }
+
+        send({ stage: 'done', final: fullText });
       } catch (err) {
         send({ stage: 'error', error: err.message });
       }
@@ -99,10 +72,6 @@ export default async function handler(req) {
   });
 
   return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Access-Control-Allow-Origin': '*',
-    },
+    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' }
   });
 }

@@ -2,231 +2,90 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Pipeline</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Pretendard:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title>AI Pipeline Streaming</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <style>
-        /* 기존 CSS 코드 그대로 유지 */
-        :root { --bg: #0d0d0d; --surface: #141414; --card: #1a1a1a; --border: #252525; --border-bright: #333; --qwen: #a78bfa; --gemini: #34d399; --user: #60a5fa; --text: #e2e2e2; --muted: #555; --muted2: #777; --error: #f87171; --warning: #fbbf24; }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: var(--bg); color: var(--text); font-family: 'Pretendard', sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-        header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; background: var(--surface); }
-        .logo { display: flex; align-items: center; gap: 10px; font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; letter-spacing: 1px; }
-        .logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gemini); box-shadow: 0 0 8px var(--gemini); }
-        .pipeline-badges { display: flex; gap: 8px; align-items: center; }
-        .badge { font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 3px 8px; border-radius: 4px; letter-spacing: 0.5px; }
-        .badge-qwen { background: rgba(167,139,250,0.1); border: 1px solid rgba(167,139,250,0.3); color: var(--qwen); }
-        .badge-gemini { background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.3); color: var(--gemini); }
-        .badge-arrow { color: var(--muted); font-size: 12px; }
-        .clear-btn { background: none; border: 1px solid var(--border-bright); color: var(--muted2); font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 5px 10px; border-radius: 4px; cursor: pointer; transition: all 0.15s; }
-        .clear-btn:hover { border-color: var(--error); color: var(--error); }
-        #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 20px; scroll-behavior: smooth; }
-        #chat::-webkit-scrollbar { width: 4px; }
-        #chat::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
-        .msg-wrap { display: flex; flex-direction: column; gap: 4px; animation: fadeUp 0.2s ease; }
-        @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-        .msg-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 0 4px; }
-        .label-user { color: var(--user); }
-        .label-qwen { color: var(--qwen); }
-        .label-gemini { color: var(--gemini); }
-        .label-system { color: var(--muted2); }
-        .msg-bubble { padding: 14px 16px; border-radius: 8px; line-height: 1.7; font-size: 14px; }
-        .bubble-user { background: rgba(96,165,250,0.06); border: 1px solid rgba(96,165,250,0.15); align-self: flex-end; max-width: 80%; white-space: pre-wrap; }
-        .bubble-qwen { background: rgba(167,139,250,0.05); border: 1px solid rgba(167,139,250,0.15); border-left: 3px solid var(--qwen); }
-        .bubble-gemini { background: rgba(52,211,153,0.05); border: 1px solid rgba(52,211,153,0.15); border-left: 3px solid var(--gemini); }
-        .bubble-system { background: rgba(251,191,36,0.05); border: 1px solid rgba(251,191,36,0.15); color: var(--warning); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
-        .bubble-error { background: rgba(248,113,113,0.05); border: 1px solid rgba(248,113,113,0.2); color: var(--error); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
-        .msg-bubble h1, .msg-bubble h2, .msg-bubble h3 { font-family: 'JetBrains Mono', monospace; margin: 12px 0 6px; color: var(--text); }
-        .msg-bubble pre { margin: 10px 0; border-radius: 6px; overflow: hidden; border: 1px solid var(--border-bright); }
-        .msg-bubble pre code { background: none; padding: 0; color: inherit; font-size: 12px; }
-        .pipeline-status { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
-        .stage-item { display: flex; align-items: center; gap: 6px; color: var(--muted); transition: color 0.3s; }
-        .stage-item.active { color: var(--warning); }
-        .stage-item.done-qwen { color: var(--qwen); }
-        .stage-item.done-gemini { color: var(--gemini); }
-        .stage-item.failed { color: var(--error); }
-        .stage-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-        .stage-item.active .stage-dot { animation: pulseDot 1s infinite; }
-        @keyframes pulseDot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.7); } }
-        .stage-divider { color: var(--border-bright); font-size: 10px; }
-        .input-area { border-top: 1px solid var(--border); padding: 16px 20px; background: var(--surface); flex-shrink: 0; }
-        .input-wrap { display: flex; gap: 10px; align-items: flex-end; max-width: 900px; margin: 0 auto; }
-        textarea { flex: 1; background: var(--card); border: 1px solid var(--border-bright); border-radius: 8px; color: var(--text); font-family: 'Pretendard', sans-serif; font-size: 14px; line-height: 1.6; padding: 12px 14px; resize: none; outline: none; min-height: 48px; max-height: 160px; transition: border-color 0.2s; overflow-y: auto; }
-        textarea:focus { border-color: rgba(167,139,250,0.4); }
-        .send-btn { background: linear-gradient(135deg, var(--qwen), var(--gemini)); border: none; border-radius: 8px; color: #000; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 13px; padding: 12px 18px; cursor: pointer; transition: all 0.15s; height: 48px; }
-        .send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-        .welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--muted); text-align: center; padding: 40px; }
-        .welcome-title { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: var(--text); letter-spacing: 2px; }
-        .welcome-flow { display: flex; align-items: center; gap: 10px; font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 12px 20px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
-        .flow-qwen { color: var(--qwen); } .flow-gemini { color: var(--gemini); }
+        body { background: #0d0d0d; color: #e2e2e2; font-family: sans-serif; padding: 20px; }
+        #chat { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+        .msg { padding: 15px; border-radius: 8px; border: 1px solid #333; line-height: 1.6; }
+        .user { border-color: #60a5fa; align-self: flex-end; background: #1e293b; }
+        .ai { border-color: #34d399; background: #064e3b1a; border-left: 4px solid #34d399; }
+        pre { background: #1a1a1a; padding: 10px; border-radius: 5px; overflow-x: auto; }
+        code { font-family: monospace; }
+        .input-area { position: fixed; bottom: 0; left: 0; width: 100%; padding: 20px; background: #141414; border-top: 1px solid #333; }
+        .wrap { max-width: 900px; margin: 0 auto; display: flex; gap: 10px; }
+        textarea { flex: 1; background: #1a1a1a; color: white; border: 1px solid #444; padding: 10px; border-radius: 5px; }
+        button { padding: 10px 20px; background: #34d399; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
 
-<header>
-    <div class="logo"><div class="logo-dot"></div> AI PIPELINE</div>
-    <div class="pipeline-badges">
-        <span class="badge badge-qwen">Qwen 2.5</span>
-        <span class="badge-arrow">→</span>
-        <span class="badge badge-gemini">Gemini 2.5 Flash</span>
-    </div>
-    <button class="clear-btn" onclick="clearChat()">대화 초기화</button>
-</header>
-
-<div id="chat">
-    <div class="welcome" id="welcome">
-        <div class="welcome-title">DUAL PIPELINE</div>
-        <div class="welcome-sub">Qwen의 설계와 Gemini의 완성. 타임아웃 방어 로직 적용됨.</div>
-        <div class="welcome-flow">
-            <div class="flow-qwen">● Qwen 초안</div>
-            <span style="color:var(--muted)">──▶</span>
-            <div class="flow-gemini">● Gemini 완성</div>
-        </div>
-    </div>
-</div>
+<div id="chat"></div>
 
 <div class="input-area">
-    <div class="input-wrap">
-        <textarea id="input" placeholder="메시지를 입력하세요..." rows="1"></textarea>
-        <button class="send-btn" id="sendBtn" onclick="sendMessage()">전송</button>
+    <div class="wrap">
+        <textarea id="input" placeholder="명령어를 입력하세요..."></textarea>
+        <button id="sendBtn" onclick="sendMessage()">전송</button>
     </div>
 </div>
 
 <script>
-marked.setOptions({ breaks: true, gfm: true });
-
-let conversationHistory = [];
-let isLoading = false;
-
-const chatEl = document.getElementById('chat');
-const inputEl = document.getElementById('input');
-const sendBtn = document.getElementById('sendBtn');
-const welcomeEl = document.getElementById('welcome');
-
-function scrollToBottom() { chatEl.scrollTop = chatEl.scrollHeight; }
-
-function addUserMessage(text) {
-    if (welcomeEl) welcomeEl.style.display = 'none';
-    const wrap = document.createElement('div');
-    wrap.className = 'msg-wrap';
-    wrap.style.alignItems = 'flex-end';
-    wrap.innerHTML = `<div class="msg-label label-user">YOU</div><div class="msg-bubble bubble-user">${text.replace(/\n/g, '<br>')}</div>`;
-    chatEl.appendChild(wrap);
-    scrollToBottom();
-}
-
-function addPipelineStatus() {
-    const wrap = document.createElement('div');
-    wrap.className = 'msg-wrap';
-    wrap.id = 'pipeline-status-container';
-    wrap.innerHTML = `
-        <div class="pipeline-status">
-            <div class="stage-item" id="stage-qwen"><div class="stage-dot"></div>Qwen</div>
-            <span class="stage-divider">▶</span>
-            <div class="stage-item" id="stage-gemini"><div class="stage-dot"></div>Gemini</div>
-            <span class="stage-divider">▶</span>
-            <div class="stage-item" id="stage-final"><div class="stage-dot"></div>출력</div>
-        </div>
-    `;
-    chatEl.appendChild(wrap);
-    scrollToBottom();
-}
-
-function updateStage(stage) {
-    const qwen = document.getElementById('stage-qwen');
-    const gemini = document.getElementById('stage-gemini');
-    const final = document.getElementById('stage-final');
-    if (!qwen) return;
-
-    if (stage === 'qwen_start') {
-        qwen.classList.add('active');
-    } else if (stage === 'gemini_start') {
-        qwen.classList.remove('active');
-        qwen.classList.add('done-qwen');
-        gemini.classList.add('active');
-    } else if (stage === 'done') {
-        gemini.classList.remove('active');
-        gemini.classList.add('done-gemini');
-        final.classList.add('done-gemini');
-    }
-}
-
-function addFinalAnswer(content) {
-    const wrap = document.createElement('div');
-    wrap.className = 'msg-wrap';
-    wrap.innerHTML = `
-        <div class="msg-label label-gemini">FINAL ANSWER</div>
-        <div class="msg-bubble bubble-gemini">${marked.parse(content)}</div>
-    `;
-    chatEl.appendChild(wrap);
-    scrollToBottom();
-    hljs.highlightAll();
-}
+let history = [];
 
 async function sendMessage() {
-    const text = inputEl.value.trim();
-    if (!text || isLoading) return;
+    const input = document.getElementById('input');
+    const text = input.value.trim();
+    if(!text) return;
+    input.value = '';
 
-    isLoading = true;
-    sendBtn.disabled = true;
-    inputEl.value = '';
-    
-    addUserMessage(text);
-    addPipelineStatus();
+    const chat = document.getElementById('chat');
+    chat.innerHTML += `<div class="msg user">${text}</div>`;
+
+    // 스트리밍용 컨테이너 생성
+    const aiMsgDiv = document.createElement('div');
+    aiMsgDiv.className = 'msg ai';
+    aiMsgDiv.innerHTML = '<i>생성 중...</i>';
+    chat.appendChild(aiMsgDiv);
+
+    let currentText = "";
 
     try {
         const res = await fetch('/api/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages: [...conversationHistory, { role: 'user', content: text }] })
+            body: JSON.stringify({ messages: [...history, {role:'user', content: text}] })
         });
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let buffer = '';
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop();
 
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            
             for (const line of lines) {
                 if (!line.startsWith('data: ')) continue;
-                try {
-                    const data = JSON.parse(line.slice(6));
-                    if (data.stage) updateStage(data.stage);
-                    if (data.stage === 'done') {
-                        document.getElementById('pipeline-status-container')?.remove();
-                        addFinalAnswer(data.final);
-                        conversationHistory.push({ role: 'user', content: text });
-                        conversationHistory.push({ role: 'assistant', content: data.final });
-                    }
-                    if (data.stage === 'error') throw new Error(data.error);
-                } catch (e) { console.error(e); }
-            }
-        }
-    } catch (err) {
-        const errWrap = document.createElement('div');
-        errWrap.className = 'msg-wrap';
-        errWrap.innerHTML = `<div class="msg-bubble bubble-error">오류: ${err.message}</div>`;
-        chatEl.appendChild(errWrap);
-    } finally {
-        isLoading = false;
-        sendBtn.disabled = false;
-    }
-}
+                const data = JSON.parse(line.slice(6));
 
-function clearChat() {
-    conversationHistory = [];
-    chatEl.innerHTML = '';
-    location.reload();
+                if (data.stage === 'streaming') {
+                    currentText += data.chunk;
+                    aiMsgDiv.innerHTML = marked.parse(currentText);
+                    hljs.highlightAll();
+                }
+                if (data.stage === 'done') {
+                    history.push({role:'user', content: text});
+                    history.push({role:'assistant', content: data.final});
+                }
+            }
+            window.scrollTo(0, document.body.scrollHeight);
+        }
+    } catch (e) {
+        aiMsgDiv.innerHTML = "에러 발생: " + e.message;
+    }
 }
 </script>
 </body>

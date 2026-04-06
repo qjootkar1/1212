@@ -1,50 +1,47 @@
 // ============================================================
-//  AI Pipeline — api/chat.js (최종 최적화 버전)
+//  AI Pipeline — api/chat.js (구조적 중단 방지 및 최종 완결 버전)
 // ============================================================
 
 export const config = { runtime: 'edge' };
 
 const QWEN_SYSTEM = `당신은 10년 이상 경력의 시니어 소프트웨어 엔지니어입니다.
-
-[언어 규칙]
-- 기본 답변 언어: 한국어 (영어 요청 시에만 영어)
-- 코드/변수명: 영어
-- 코드 주석: 한국어
-
-[사고 과정 지침]
-반드시 다음 구조로 사고하되, **핵심 위주로 매우 간결하게** 작성하세요. (지나치게 길면 답변이 잘릴 수 있습니다.)
-[사고 과정]
-1. 요구사항 & 제약조건 분석
-2. 핵심 엣지케이스 및 동시성/보안 고려사항
-3. 최적 접근법 선택 이유
-4. 구현 핵심 단계
-[/사고 과정]
-
-⚠️ 답변은 반드시 핵심 코드와 설명만 출력하세요.`;
+[지침]
+1. [사고 과정]은 3문장 이내로 아주 간결하게 핵심만 요약하세요.
+2. 사고 과정 직후 반드시 [답변] 태그를 붙이고 코드를 작성하세요.
+3. 말이 길어지면 시스템 타임아웃으로 연결이 끊기니, 불필요한 서론 없이 바로 본론(코드)으로 들어가세요.`;
 
 const GEMINI_SYSTEM = `당신은 시니어 소프트웨어 엔지니어입니다.
-주어진 초안을 검토하여 로직 오류를 수정하고, 실무 수준의 완성도 높은 최종 답변만 출력하세요.
+전달받은 'Qwen 초안'이 미완성이거나 비어 있더라도, '사용자 요청'을 분석하여 직접 최고의 완성된 답변을 작성하세요.
 
 [출력 규칙]
-- **최종 답변만 작성** (검토 과정, 수정 내역 출력 절대 금지)
-- 코드 질문: 완성된 코드 + 핵심 설명 (주석 포함)
-- 부가가치: 테스트 코드 또는 실무 주의사항 중 하나를 반드시 포함
+- 오직 최종 답변만 출력 (검토 과정이나 수정 내역 언급 금지)
+- 코드 질문: 실행 가능한 완성된 코드 + 핵심 설명 + 테스트 코드 포함
+- 부가가치: 실무 사용 시 주의사항이나 확장성 제안 포함
 
-⚠️ 모든 답변은 끊기지 않도록 명확하고 간결하게 마무리하세요.`;
+⚠️ 답변이 중간에 잘리지 않도록 명확하고 간결하게 마무리하세요.`;
 
 const GEMINI_SOLO_SYSTEM = `당신은 시니어 소프트웨어 엔지니어입니다. 
-Qwen 모델 사용이 불가하여 단독으로 답변을 생성합니다. 
-최고 수준의 코드와 상세한 엣지케이스 설명을 포함한 최종 답변을 작성하세요.`;
+현재 메인 파이프라인(Qwen) 연결이 원활하지 않아 단독으로 답변을 생성합니다. 
+사용자의 요청에 대해 최적화된 코드와 상세한 설명을 포함한 최종 답변을 작성하세요.`;
 
 function addReminder(message) {
-  return `${message}\n\n---\n⚠️ [사고 과정]은 핵심만 짧게, 답변은 코드 위주로 간결하게 작성하세요.`;
+  return `${message}\n\n---\n⚠️ [사고 과정]은 3줄 이내로 짧게, [답변] 태그 뒤에 코드를 바로 작성하세요.`;
 }
 
-// Qwen의 사고 과정 블록을 제거하여 Gemini에게 전달할 토큰 아끼기
+// 사고 과정이 잘리거나 태그가 닫히지 않아도 내용을 추출하는 강화된 함수
 function stripThinking(text) {
-  return text
-    .replace(/\[사고 과정\][\s\S]*?\[\/사고 과정\]/g, '')
-    .trim();
+  if (!text) return "";
+  
+  // 1. 정상적인 구조 제거 시도
+  let cleanText = text.replace(/\[사고 과정\][\s\S]*?\[\/사고 과정\]/g, '').trim();
+  
+  // 2. 만약 사고 과정 태그가 닫히지 않고 끝났을 경우 (타임아웃 상황)
+  if (!cleanText || cleanText.length < 10) {
+    const splitPoint = text.includes('[/사고 과정]') ? '[/사고 과정]' : '[사고 과정]';
+    cleanText = text.split(splitPoint).pop().trim();
+  }
+  
+  return cleanText.replace(/\[답변\]/g, '').trim();
 }
 
 function estimateTokens(text) {
@@ -65,7 +62,6 @@ function sseEvent(data) {
 }
 
 async function callQwen(messages, apiKey, referer) {
-  let lastError = null;
   for (const model of QWEN_MODELS) {
     try {
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -78,8 +74,8 @@ async function callQwen(messages, apiKey, referer) {
         body: JSON.stringify({
           model,
           messages,
-          max_tokens: 4000, // 사고 과정 포함 적정 수준
-          temperature: 0.7,
+          max_tokens: 2500, // 사고 과정과 초안 코드를 담기에 충분한 제한
+          temperature: 0.6,
         }),
       });
       if (res.ok) {
@@ -87,7 +83,7 @@ async function callQwen(messages, apiKey, referer) {
         return data.choices[0].message.content;
       }
     } catch (err) {
-      lastError = err.message;
+      console.error(`Qwen 모델(${model}) 호출 실패:`, err.message);
     }
   }
   return null;
@@ -103,19 +99,21 @@ async function callGemini(systemPrompt, userMessage, apiKey) {
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ parts: [{ text: userMessage }] }],
         generationConfig: { 
-          maxOutputTokens: 8000, // 답변 절단 방지를 위해 최대치 확보
-          temperature: 0.3 
+          maxOutputTokens: 8000, 
+          temperature: 0.2 
         },
       }),
     }
   );
-  if (!res.ok) throw new Error(`Gemini Error: ${res.status}`);
+  if (!res.ok) throw new Error(`Gemini API 오류: ${res.status}`);
   const data = await res.json();
   return data.candidates[0].content.parts[0].text;
 }
 
 export default async function handler(req) {
-  if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: { 'Access-Control-Allow-Origin': '*' } });
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 200, headers: { 'Access-Control-Allow-Origin': '*' } });
+  }
 
   const { messages } = await req.json();
   const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
@@ -129,8 +127,8 @@ export default async function handler(req) {
       const send = (data) => controller.enqueue(enc.encode(sseEvent(data)));
 
       try {
-        // 1. Qwen 단계
-        send({ stage: 'qwen_start', message: '🧠 Qwen이 아키텍처 설계 중...' });
+        // 1단계: Qwen 초안 생성
+        send({ stage: 'qwen_start', message: '🧠 Qwen이 아키텍처를 설계 중입니다...' });
         const qwenMessages = [
           { role: 'system', content: QWEN_SYSTEM },
           ...messages.slice(0, -1),
@@ -140,18 +138,25 @@ export default async function handler(req) {
         const qwenRaw = await callQwen(qwenMessages, OPENROUTER_API_KEY, referer);
 
         if (!qwenRaw) {
-          // 폴백: Gemini Solo
-          send({ stage: 'fallback', message: '⚠️ Qwen 연결 실패. Gemini 단독 모드로 전환합니다.' });
+          // Qwen 실패 시 폴백
+          send({ stage: 'fallback', message: '⚠️ Qwen 응답 지연으로 Gemini 단독 모드로 전환합니다.' });
           const final = await callGemini(GEMINI_SOLO_SYSTEM, userMessage, GEMINI_API_KEY);
           send({ stage: 'done', final });
         } else {
-          // 2. Gemini 정제 단계
+          // 2단계: Gemini 최종 정제
           const qwenDraft = stripThinking(qwenRaw);
-          send({ stage: 'gemini_start', message: '🔍 Gemini가 코드를 최종 검토 및 최적화 중...' });
+          send({ stage: 'gemini_start', message: '🔍 Gemini가 코드를 최종 검토 및 완성 중입니다...' });
           
-          const geminiInput = `사용자 요청: ${userMessage}\n\nQwen 초안:\n${qwenDraft}\n\n위 내용을 바탕으로 최적화된 최종 답변을 작성해줘.`;
+          const geminiInput = `
+[사용자 요청]
+${userMessage}
+
+[Qwen 초안 정보]
+${qwenDraft || "초안이 생성되지 않았거나 타임아웃되었습니다. 직접 답변을 작성하세요."}
+
+위 정보를 바탕으로 완성된 시니어급 코드를 출력해줘.`;
+
           const final = await callGemini(GEMINI_SYSTEM, geminiInput, GEMINI_API_KEY);
-          
           send({ stage: 'done', final, tokens: { input: estimateTokens(userMessage) } });
         }
       } catch (err) {
@@ -162,5 +167,11 @@ export default async function handler(req) {
     }
   });
 
-  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Access-Control-Allow-Origin': '*' } });
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
 }

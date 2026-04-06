@@ -1,27 +1,17 @@
 // ============================================================
 //  AI Pipeline — api/chat.js
-//  역할: 사용자 메시지를 받아 Qwen → Gemini 2단계 파이프라인으로
-//        처리한 뒤, 결과를 실시간 스트리밍(SSE)으로 브라우저에 전달
-//
-//  흐름 요약:
-//  브라우저 ──POST──▶ 이 파일 ──▶ Qwen (초안 생성)
-//                                  ──▶ Gemini (검토·개선)
-//                               ◀── SSE 스트림으로 단계별 전달
 //
 //  ✅ 수정 이력:
-//  - Qwen max_tokens 8000 → 3500 (응답 길이 제한)
-//  - Gemini 전달 전 [사고 과정] 블록 제거 (토큰 절약 + 컨텍스트 오염 방지)
-//  - Gemini 시스템 프롬프트 변경: 리뷰 과정 노출 X, 최종 답변만 출력
-//  - Gemini 프롬프트에 "반드시 부가가치 추가" 지시 추가 (초안 통과 방지)
+//  - Qwen max_tokens 8000 → 3500
+//  - Gemini 전달 전 [사고 과정] 블록 제거
+//  - Gemini 시스템 프롬프트: 최종 답변만 출력 + 부가가치 필수
+//  - Gemini maxOutputTokens 3000 → 5000 (긴 질문 절단 방지)
+//  - Qwen 전체 실패 시 Gemini 단독 폴백 (에러 대신 계속 진행)
 // ============================================================
 
 export const config = { runtime: 'edge' };
 
 
-// ============================================================
-//  시스템 프롬프트 — Qwen
-//  ✅ 수정: "간결하게" 지시 추가 — 불필요하게 긴 답변 방지
-// ============================================================
 const QWEN_SYSTEM = `당신은 10년 이상 경력의 시니어 소프트웨어 엔지니어입니다.
 
 [언어 규칙]
@@ -66,13 +56,6 @@ const QWEN_SYSTEM = `당신은 10년 이상 경력의 시니어 소프트웨어 
 - 불필요한 반복, 중복 설명 금지`;
 
 
-// ============================================================
-//  시스템 프롬프트 — Gemini
-//  ✅ 수정: 내부 검토 과정을 출력하지 말고 최종 답변만 출력하도록 변경
-//  이유: 기존엔 Gemini가 "발견된 문제점 / 개선된 코드 / 변경사항 요약"
-//        형식으로 출력해서 사용자 입장에서 읽기 불편했음.
-//        최종 답변만 깔끔하게 출력하도록 변경.
-// ============================================================
 const GEMINI_SYSTEM = `당신은 시니어 소프트웨어 엔지니어입니다.
 
 [언어 규칙]
@@ -99,15 +82,26 @@ const GEMINI_SYSTEM = `당신은 시니어 소프트웨어 엔지니어입니다
 초안 코드가 올바르더라도 반드시 다음 중 하나 이상을 추가하세요:
 1. 동작을 검증하는 테스트 코드 (정상 케이스 + 엣지케이스)
 2. 실무 사용 시 주의사항 또는 한계점
-3. 성능·확장성 측면의 개선 가능한 변형 제안 (예: thread-safe 버전, TTL 추가 등)
+3. 성능·확장성 측면의 개선 가능한 변형 제안
 
-⚠️ "변경 없음" 또는 초안을 그대로 복사하는 것은 절대 금지입니다.
-   반드시 초안보다 실용적으로 더 가치 있는 답변을 만들어야 합니다.`;
+⚠️ "변경 없음" 또는 초안을 그대로 복사하는 것은 절대 금지입니다.`;
 
 
-// ============================================================
-//  addReminder — 매 메시지 끝에 규칙 상기문 추가
-// ============================================================
+// ✅ Qwen 실패 시 Gemini가 직접 답변하는 단독 모드용 프롬프트
+const GEMINI_SOLO_SYSTEM = `당신은 10년 이상 경력의 시니어 소프트웨어 엔지니어입니다.
+
+[언어 규칙]
+- 기본 답변 언어: 한국어
+- 사용자가 "영어로 답변해" 또는 "answer in English" 라고 하면 영어로 전환
+- 코드(변수명/함수명/클래스명): 항상 영어
+- 코드 주석: 기본 한국어, 영어 요청 시 영어
+
+요청에 대해 최선의 답변을 작성하세요.
+- 코드 질문: 완성된 코드 + 핵심 설명 + 테스트 코드
+- 개념 질문: 핵심 개념 → 실무 적용
+- 엣지케이스와 주의사항 포함`;
+
+
 function addReminder(message) {
   return `${message}
 
@@ -121,34 +115,16 @@ function addReminder(message) {
 }
 
 
-// ============================================================
-//  stripThinking — Gemini 전달 전 [사고 과정] 블록 제거
-//
-//  ✅ 신규 추가
-//  이유 3가지:
-//  1. 토큰 절약: [사고 과정]은 평균 500~2000 토큰. 제거하면
-//     Gemini 컨텍스트 여유가 생겨서 컨텍스트 초과로 스킵되는 문제 해결.
-//  2. 컨텍스트 오염 방지: Gemini가 사고 과정을 "답변"으로 오해해서
-//     중복 설명하거나 포맷을 따라하는 현상 방지.
-//  3. 정제 품질 향상: 핵심 답변만 보여주면 Gemini가 더 정확히 개선 가능.
-// ============================================================
 function stripThinking(text) {
-  // [사고 과정] ... [/사고 과정] 블록 제거 (줄바꿈 포함)
   return text
     .replace(/\[사고 과정\][\s\S]*?\[\/사고 과정\]/g, '')
-    // [검토 사고 과정] 블록도 혹시 있으면 제거
     .replace(/\[검토 사고 과정\][\s\S]*?\[\/검토 사고 과정\]/g, '')
-    // [답변] 태그가 있으면 제거 (내용은 유지)
     .replace(/\[답변\]/g, '')
-    // 3줄 이상 연속 빈 줄 → 2줄로 정리
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
 
-// ============================================================
-//  estimateTokens — 텍스트 토큰 수 추정 (한글/영어 분리 계산)
-// ============================================================
 function estimateTokens(text) {
   const koreanCharCount = (text.match(/[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/g) || []).length;
   const otherCharCount = text.length - koreanCharCount;
@@ -156,9 +132,6 @@ function estimateTokens(text) {
 }
 
 
-// ============================================================
-//  QWEN_MODELS — 순서대로 시도할 무료 Qwen 모델 목록
-// ============================================================
 const QWEN_MODELS = [
   'qwen/qwen3.6-plus:free',
   'qwen/qwen3.6-plus-preview:free',
@@ -168,28 +141,19 @@ const QWEN_MODELS = [
 ];
 
 
-// ============================================================
-//  sseEvent — SSE 형식 직렬화
-// ============================================================
 function sseEvent(data) {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
-
-// ============================================================
-//  sleep — 비동기 대기
-// ============================================================
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 
 // ============================================================
-//  callQwen — Qwen 모델 호출
-//  ✅ 수정: max_tokens 8000 → 3500
-//  이유: 8000 토큰이면 A4 10장 분량. 코딩 답변에 불필요하게 길었음.
-//        3500으로 줄이면 응답 속도 향상 + Gemini 전달 토큰 절약.
-//        필요 시 사용자가 "더 자세히"라고 요청하면 됨.
+//  callQwen
+//  ✅ 수정: 모든 모델 실패 시 throw 대신 null 반환
+//  → 호출부에서 null 체크 후 Gemini 단독 폴백으로 이어짐
 // ============================================================
 async function callQwen(messages, apiKey, referer) {
   let lastError = null;
@@ -210,7 +174,7 @@ async function callQwen(messages, apiKey, referer) {
           body: JSON.stringify({
             model,
             messages,
-            max_tokens: 3500, // ✅ 8000 → 3500으로 축소
+            max_tokens: 3500,
           }),
           signal: controller.signal,
         });
@@ -226,7 +190,7 @@ async function callQwen(messages, apiKey, referer) {
 
         if (status === 429) {
           const waitMs = (attempt + 1) * 1500;
-          lastError = `${model} — 속도 제한(429), ${waitMs}ms 후 재시도`;
+          lastError = `${model} — 속도 제한(429)`;
           await sleep(waitMs);
           continue;
         }
@@ -236,31 +200,29 @@ async function callQwen(messages, apiKey, referer) {
           break;
         }
 
-        const errText = await res.text();
-        throw new Error(`Qwen API 오류 [${status}]: ${errText}`);
+        lastError = `${model} — 오류(${status})`;
+        return null;
 
       } catch (err) {
         clearTimeout(timeoutId);
-
         if (err.name === 'AbortError') {
-          lastError = `${model} — 타임아웃 (55초 초과)`;
+          lastError = `${model} — 타임아웃`;
           break;
         }
-
-        throw err;
+        lastError = `${model} — 예외: ${err.message}`;
+        break;
       }
     }
   }
 
-  throw new Error(`모든 Qwen 모델 실패. 마지막 오류: ${lastError}`);
+  console.error(`Qwen 전체 실패: ${lastError}`);
+  return null; // ✅ throw 대신 null 반환
 }
 
 
 // ============================================================
-//  callGemini — Gemini API 호출
-//  ✅ 수정: maxOutputTokens 8000 → 3000
-//  이유: Gemini는 정제 역할이므로 Qwen보다 짧아야 정상.
-//        긴 출력은 Gemini가 초안을 과잉 확장하는 신호임.
+//  callGemini
+//  ✅ 수정: maxOutputTokens 3000 → 5000
 // ============================================================
 async function callGemini(systemPrompt, userMessage, apiKey) {
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -276,7 +238,7 @@ async function callGemini(systemPrompt, userMessage, apiKey) {
           body: JSON.stringify({
             system_instruction: { parts: [{ text: systemPrompt }] },
             contents: [{ parts: [{ text: userMessage }] }],
-            generationConfig: { maxOutputTokens: 3000 }, // ✅ 8000 → 3000으로 축소
+            generationConfig: { maxOutputTokens: 5000 }, // ✅ 3000 → 5000
           }),
           signal: controller.signal,
         }
@@ -302,11 +264,9 @@ async function callGemini(systemPrompt, userMessage, apiKey) {
 
     } catch (err) {
       clearTimeout(timeoutId);
-
       if (err.name === 'AbortError') {
         throw new Error('Gemini 타임아웃 (55초 초과)');
       }
-
       throw err;
     }
   }
@@ -316,7 +276,7 @@ async function callGemini(systemPrompt, userMessage, apiKey) {
 
 
 // ============================================================
-//  handler — 메인 요청 처리 함수
+//  handler
 // ============================================================
 export default async function handler(req) {
 
@@ -376,35 +336,24 @@ export default async function handler(req) {
   const stream = new ReadableStream({
     async start(controller) {
       const enc = new TextEncoder();
-
-      const send = (data) => {
-        controller.enqueue(enc.encode(sseEvent(data)));
-      };
+      const send = (data) => controller.enqueue(enc.encode(sseEvent(data)));
 
       let pingTimer = null;
-
       const startPing = () => {
         pingTimer = setInterval(() => {
-          try {
-            controller.enqueue(enc.encode(': ping\n\n'));
-          } catch {
-            clearInterval(pingTimer);
-          }
+          try { controller.enqueue(enc.encode(': ping\n\n')); }
+          catch { clearInterval(pingTimer); }
         }, 15_000);
       };
-
       const stopPing = () => {
-        if (pingTimer) {
-          clearInterval(pingTimer);
-          pingTimer = null;
-        }
+        if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
       };
 
       try {
         startPing();
 
         // -------------------------------------------------------
-        //  1단계: Qwen CoT (초안 생성)
+        //  1단계: Qwen CoT
         // -------------------------------------------------------
         send({ stage: 'qwen_start', message: '🧠 Qwen 분석 중...' });
 
@@ -416,37 +365,53 @@ export default async function handler(req) {
 
         const qwenRaw = await callQwen(qwenMessages, OPENROUTER_API_KEY, referer);
 
-        // ✅ 사용자에게 보여줄 때도 사고 과정 제거 (선택: 보여주고 싶으면 qwenRaw 사용)
-        const qwenDraft = stripThinking(qwenRaw);
-
-        send({ stage: 'qwen_done', draft: qwenDraft });
-
         // -------------------------------------------------------
-        //  파이프라인 토큰 한도 체크
-        //  ✅ 수정: stripThinking 적용 후 토큰 계산 (더 정확한 측정)
+        //  ✅ Qwen 실패 → Gemini 단독 모드 폴백
         // -------------------------------------------------------
-        const pipelineTokens = estimateTokens(qwenDraft + userMessage);
+        if (qwenRaw === null) {
+          send({
+            stage: 'qwen_failed',
+            message: '⚠️ Qwen 모델 불가 — Gemini 단독으로 답변합니다',
+          });
 
-        if (pipelineTokens > 80_000) {
+          const finalAnswer = await callGemini(
+            GEMINI_SOLO_SYSTEM,
+            userMessage,
+            GEMINI_API_KEY
+          );
+
           stopPing();
           send({
-            stage: 'pipeline_limit',
-            message: '⚠️ 토큰 한도 초과 — Qwen 결과만 반환합니다',
-            final: qwenDraft,
+            stage: 'done',
+            final: finalAnswer,
+            solo_mode: true,
+            tokens: { estimated_input: inputTokens },
           });
-          controller.enqueue(enc.encode('data: [DONE]\n\n'));
-          controller.close();
-          return;
-        }
 
-        // -------------------------------------------------------
-        //  2단계: Gemini CoT (검토 및 개선)
-        //  ✅ 수정: stripThinking 적용된 qwenDraft 전달
-        //  → 사고 과정 없이 핵심 답변만 Gemini에 전달
-        // -------------------------------------------------------
-        send({ stage: 'gemini_start', message: '🔍 Gemini 검토 중...' });
+        } else {
+          // -------------------------------------------------------
+          //  정상 파이프라인: Qwen → Gemini 정제
+          // -------------------------------------------------------
+          const qwenDraft = stripThinking(qwenRaw);
+          send({ stage: 'qwen_done', draft: qwenDraft });
 
-        const geminiInput = `원본 요청:
+          const pipelineTokens = estimateTokens(qwenDraft + userMessage);
+
+          if (pipelineTokens > 80_000) {
+            stopPing();
+            send({
+              stage: 'pipeline_limit',
+              message: '⚠️ 토큰 한도 초과 — Qwen 결과만 반환합니다',
+              final: qwenDraft,
+            });
+            controller.enqueue(enc.encode('data: [DONE]\n\n'));
+            controller.close();
+            return;
+          }
+
+          send({ stage: 'gemini_start', message: '🔍 Gemini 검토 중...' });
+
+          const geminiInput = `원본 요청:
 ${userMessage}
 
 Qwen 초안:
@@ -454,17 +419,18 @@ ${qwenDraft}
 
 위 초안을 검토하고 개선된 최종 답변만 출력해줘. 검토 과정은 출력하지 마.`;
 
-        const finalAnswer = await callGemini(GEMINI_SYSTEM, geminiInput, GEMINI_API_KEY);
+          const finalAnswer = await callGemini(GEMINI_SYSTEM, geminiInput, GEMINI_API_KEY);
 
-        stopPing();
-        send({
-          stage: 'done',
-          final: finalAnswer,
-          tokens: {
-            estimated_input:    inputTokens,
-            estimated_pipeline: pipelineTokens,
-          },
-        });
+          stopPing();
+          send({
+            stage: 'done',
+            final: finalAnswer,
+            tokens: {
+              estimated_input:    inputTokens,
+              estimated_pipeline: pipelineTokens,
+            },
+          });
+        }
 
       } catch (err) {
         stopPing();

@@ -2,91 +2,95 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Pipeline Streaming</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
-        body { background: #0d0d0d; color: #e2e2e2; font-family: sans-serif; padding: 20px; }
-        #chat { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
-        .msg { padding: 15px; border-radius: 8px; border: 1px solid #333; line-height: 1.6; }
-        .user { border-color: #60a5fa; align-self: flex-end; background: #1e293b; }
-        .ai { border-color: #34d399; background: #064e3b1a; border-left: 4px solid #34d399; }
-        pre { background: #1a1a1a; padding: 10px; border-radius: 5px; overflow-x: auto; }
-        code { font-family: monospace; }
-        .input-area { position: fixed; bottom: 0; left: 0; width: 100%; padding: 20px; background: #141414; border-top: 1px solid #333; }
-        .wrap { max-width: 900px; margin: 0 auto; display: flex; gap: 10px; }
-        textarea { flex: 1; background: #1a1a1a; color: white; border: 1px solid #444; padding: 10px; border-radius: 5px; }
-        button { padding: 10px 20px; background: #34d399; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        :root { --bg: #0d0d0d; --text: #e2e2e2; --gemini: #34d399; --user: #60a5fa; --border: #333; }
+        body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+        .msg { padding: 15px; border-radius: 8px; border: 1px solid var(--border); max-width: 85%; line-height: 1.6; font-size: 14px; }
+        .ai { background: #111; border-left: 4px solid var(--gemini); align-self: flex-start; }
+        .user { background: #1e293b; border-color: var(--user); align-self: flex-end; }
+        pre { background: #1a1a1a; padding: 12px; border-radius: 6px; overflow-x: auto; border: 1px solid #444; }
+        .input-box { padding: 20px; background: #141414; border-top: 1px solid var(--border); }
+        .inner { max-width: 900px; margin: 0 auto; display: flex; gap: 10px; }
+        textarea { flex: 1; height: 50px; background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 6px; padding: 12px; resize: none; }
+        button { background: var(--gemini); border: none; padding: 0 25px; border-radius: 6px; font-weight: bold; cursor: pointer; color: #000; }
+        .status { font-size: 12px; color: #888; margin-bottom: 5px; }
     </style>
 </head>
 <body>
-
-<div id="chat"></div>
-
-<div class="input-area">
-    <div class="wrap">
-        <textarea id="input" placeholder="명령어를 입력하세요..."></textarea>
-        <button id="sendBtn" onclick="sendMessage()">전송</button>
+    <div id="chat"></div>
+    <div class="input-box">
+        <div class="inner">
+            <textarea id="input" placeholder="질문을 입력하세요... (Enter 전송)"></textarea>
+            <button id="sendBtn" onclick="send()">전송</button>
+        </div>
     </div>
-</div>
 
-<script>
-let history = [];
+    <script>
+        const chat = document.getElementById('chat');
+        const input = document.getElementById('input');
 
-async function sendMessage() {
-    const input = document.getElementById('input');
-    const text = input.value.trim();
-    if(!text) return;
-    input.value = '';
-
-    const chat = document.getElementById('chat');
-    chat.innerHTML += `<div class="msg user">${text}</div>`;
-
-    // 스트리밍용 컨테이너 생성
-    const aiMsgDiv = document.createElement('div');
-    aiMsgDiv.className = 'msg ai';
-    aiMsgDiv.innerHTML = '<i>생성 중...</i>';
-    chat.appendChild(aiMsgDiv);
-
-    let currentText = "";
-
-    try {
-        const res = await fetch('/api/chat', {
-            method: 'POST',
-            body: JSON.stringify({ messages: [...history, {role:'user', content: text}] })
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+            }
         });
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
+        async function send() {
+            const val = input.value.trim();
+            if(!val) return;
+            input.value = '';
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n');
+            chat.innerHTML += `<div class="msg user">${val.replace(/\n/g, '<br>')}</div>`;
             
-            for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                const data = JSON.parse(line.slice(6));
+            const aiDiv = document.createElement('div');
+            aiDiv.className = 'msg ai';
+            aiDiv.innerHTML = '<div class="status">응답 생성 중...</div><div class="content"></div>';
+            chat.appendChild(aiDiv);
+            const contentDiv = aiDiv.querySelector('.content');
 
-                if (data.stage === 'streaming') {
-                    currentText += data.chunk;
-                    aiMsgDiv.innerHTML = marked.parse(currentText);
-                    hljs.highlightAll();
+            try {
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ messages: [{role:'user', content: val}] })
+                });
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let resultText = "";
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.stage === 'streaming') {
+                                resultText += data.chunk;
+                                contentDiv.innerHTML = marked.parse(resultText);
+                                hljs.highlightAll();
+                                chat.scrollTop = chat.scrollHeight;
+                            }
+                            if (data.stage === 'qwen_start') aiDiv.querySelector('.status').innerText = '🏗️ 설계 중...';
+                            if (data.stage === 'gemini_start') aiDiv.querySelector('.status').innerText = '🚀 코드 작성 중...';
+                        }
+                    }
                 }
-                if (data.stage === 'done') {
-                    history.push({role:'user', content: text});
-                    history.push({role:'assistant', content: data.final});
-                }
+                aiDiv.querySelector('.status').remove();
+            } catch (e) {
+                contentDiv.innerHTML = "오류 발생: " + e.message;
             }
-            window.scrollTo(0, document.body.scrollHeight);
         }
-    } catch (e) {
-        aiMsgDiv.innerHTML = "에러 발생: " + e.message;
-    }
-}
-</script>
+    </script>
 </body>
 </html>

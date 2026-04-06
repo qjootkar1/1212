@@ -38,7 +38,6 @@ body {
   overflow: hidden;
 }
 
-/* 헤더 */
 header {
   padding: 14px 20px;
   border-bottom: 1px solid var(--border);
@@ -93,10 +92,7 @@ header {
   color: var(--gemini);
 }
 
-.badge-arrow {
-  color: var(--muted);
-  font-size: 12px;
-}
+.badge-arrow { color: var(--muted); font-size: 12px; }
 
 .clear-btn {
   background: none;
@@ -109,13 +105,8 @@ header {
   cursor: pointer;
   transition: all 0.15s;
 }
+.clear-btn:hover { border-color: var(--error); color: var(--error); }
 
-.clear-btn:hover {
-  border-color: var(--error);
-  color: var(--error);
-}
-
-/* 채팅 영역 */
 #chat {
   flex: 1;
   overflow-y: auto;
@@ -125,12 +116,10 @@ header {
   gap: 20px;
   scroll-behavior: smooth;
 }
-
 #chat::-webkit-scrollbar { width: 4px; }
 #chat::-webkit-scrollbar-track { background: transparent; }
 #chat::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
 
-/* 메시지 */
 .msg-wrap {
   display: flex;
   flex-direction: column;
@@ -199,7 +188,6 @@ header {
   font-size: 12px;
 }
 
-/* 마크다운 스타일 */
 .msg-bubble h1, .msg-bubble h2, .msg-bubble h3 {
   font-family: 'JetBrains Mono', monospace;
   margin: 12px 0 6px;
@@ -208,11 +196,9 @@ header {
 .msg-bubble h1 { font-size: 16px; }
 .msg-bubble h2 { font-size: 14px; }
 .msg-bubble h3 { font-size: 13px; color: var(--muted2); }
-
 .msg-bubble p { margin: 6px 0; }
 .msg-bubble ul, .msg-bubble ol { padding-left: 20px; margin: 6px 0; }
 .msg-bubble li { margin: 3px 0; }
-
 .msg-bubble code {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
@@ -221,25 +207,16 @@ header {
   border-radius: 3px;
   color: #e2b97a;
 }
-
 .msg-bubble pre {
   margin: 10px 0;
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid var(--border-bright);
 }
-
-.msg-bubble pre code {
-  background: none;
-  padding: 0;
-  color: inherit;
-  font-size: 12px;
-}
-
+.msg-bubble pre code { background: none; padding: 0; color: inherit; font-size: 12px; }
 .msg-bubble strong { color: #fff; font-weight: 600; }
 .msg-bubble em { color: var(--muted2); }
 
-/* 파이프라인 진행 상태 */
 .pipeline-status {
   display: flex;
   align-items: center;
@@ -259,10 +236,10 @@ header {
   color: var(--muted);
   transition: color 0.3s;
 }
-
 .stage-item.active { color: var(--warning); }
 .stage-item.done-qwen { color: var(--qwen); }
 .stage-item.done-gemini { color: var(--gemini); }
+.stage-item.failed { color: var(--error); }
 
 .stage-dot {
   width: 6px;
@@ -270,22 +247,15 @@ header {
   border-radius: 50%;
   background: currentColor;
 }
-
-.stage-item.active .stage-dot {
-  animation: pulseDot 1s infinite;
-}
+.stage-item.active .stage-dot { animation: pulseDot 1s infinite; }
 
 @keyframes pulseDot {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.7); }
 }
 
-.stage-divider {
-  color: var(--border-bright);
-  font-size: 10px;
-}
+.stage-divider { color: var(--border-bright); font-size: 10px; }
 
-/* 토큰 정보 */
 .token-info {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
@@ -294,10 +264,8 @@ header {
   display: flex;
   gap: 12px;
 }
-
 .token-val { color: var(--muted2); }
 
-/* 입력 영역 */
 .input-area {
   border-top: 1px solid var(--border);
   padding: 16px 20px;
@@ -330,7 +298,6 @@ textarea {
   transition: border-color 0.2s;
   overflow-y: auto;
 }
-
 textarea:focus { border-color: rgba(167,139,250,0.4); }
 textarea::placeholder { color: var(--muted); }
 
@@ -348,7 +315,6 @@ textarea::placeholder { color: var(--muted); }
   white-space: nowrap;
   height: 48px;
 }
-
 .send-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
 .send-btn:active { transform: translateY(0); }
 .send-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
@@ -362,7 +328,6 @@ textarea::placeholder { color: var(--muted); }
   letter-spacing: 0.5px;
 }
 
-/* 웰컴 화면 */
 .welcome {
   flex: 1;
   display: flex;
@@ -374,7 +339,6 @@ textarea::placeholder { color: var(--muted); }
   text-align: center;
   padding: 40px;
 }
-
 .welcome-title {
   font-family: 'JetBrains Mono', monospace;
   font-size: 20px;
@@ -382,13 +346,7 @@ textarea::placeholder { color: var(--muted); }
   color: var(--text);
   letter-spacing: 2px;
 }
-
-.welcome-sub {
-  font-size: 13px;
-  line-height: 1.8;
-  max-width: 400px;
-}
-
+.welcome-sub { font-size: 13px; line-height: 1.8; max-width: 400px; }
 .welcome-flow {
   display: flex;
   align-items: center;
@@ -401,13 +359,7 @@ textarea::placeholder { color: var(--muted); }
   border-radius: 8px;
   margin-top: 8px;
 }
-
-.flow-step {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
+.flow-step { display: flex; align-items: center; gap: 6px; }
 .flow-qwen { color: var(--qwen); }
 .flow-gemini { color: var(--gemini); }
 .flow-arrow { color: var(--muted); }
@@ -437,17 +389,11 @@ textarea::placeholder { color: var(--muted); }
       두 모델 모두 강화된 CoT 프롬프트 적용.
     </div>
     <div class="welcome-flow">
-      <div class="flow-step flow-qwen">
-        <span>●</span> Qwen3.6 초안
-      </div>
+      <div class="flow-step flow-qwen"><span>●</span> Qwen3.6 초안</div>
       <span class="flow-arrow">──▶</span>
-      <div class="flow-step flow-gemini">
-        <span>●</span> Gemini 검토
-      </div>
+      <div class="flow-step flow-gemini"><span>●</span> Gemini 검토</div>
       <span class="flow-arrow">──▶</span>
-      <div class="flow-step" style="color:var(--text)">
-        최종 출력
-      </div>
+      <div class="flow-step" style="color:var(--text)">최종 출력</div>
     </div>
   </div>
 </div>
@@ -465,7 +411,6 @@ textarea::placeholder { color: var(--muted); }
 </div>
 
 <script>
-// marked 설정
 marked.setOptions({ breaks: true, gfm: true });
 
 let conversationHistory = [];
@@ -476,7 +421,6 @@ const inputEl = document.getElementById('input');
 const sendBtn = document.getElementById('sendBtn');
 const welcomeEl = document.getElementById('welcome');
 
-// textarea 자동 높이
 inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + 'px';
@@ -489,13 +433,8 @@ inputEl.addEventListener('keydown', (e) => {
   }
 });
 
-function scrollToBottom() {
-  chatEl.scrollTop = chatEl.scrollHeight;
-}
-
-function hideWelcome() {
-  if (welcomeEl) welcomeEl.style.display = 'none';
-}
+function scrollToBottom() { chatEl.scrollTop = chatEl.scrollHeight; }
+function hideWelcome() { if (welcomeEl) welcomeEl.style.display = 'none'; }
 
 function addUserMessage(text) {
   hideWelcome();
@@ -538,19 +477,29 @@ function addPipelineStatus() {
 }
 
 function updateStage(stage) {
-  const qwen = document.getElementById('stage-qwen');
+  const qwen  = document.getElementById('stage-qwen');
   const gemini = document.getElementById('stage-gemini');
   const final = document.getElementById('stage-final');
   if (!qwen) return;
 
   if (stage === 'qwen_start') {
     qwen.classList.add('active');
+
   } else if (stage === 'qwen_done') {
     qwen.classList.remove('active');
     qwen.classList.add('done-qwen');
     gemini.classList.add('active');
+
+  // ✅ 추가: Qwen 실패 → 빨간색 표시 후 Gemini 단독으로 넘어감
+  } else if (stage === 'qwen_failed') {
+    qwen.classList.remove('active');
+    qwen.classList.add('failed');
+    qwen.querySelector('.stage-dot').title = 'Qwen 모델 불가';
+    gemini.classList.add('active');
+
   } else if (stage === 'gemini_start') {
     gemini.classList.add('active');
+
   } else if (stage === 'done') {
     gemini.classList.remove('active');
     gemini.classList.add('done-gemini');
@@ -571,19 +520,35 @@ function addQwenDraft(content) {
   hljs.highlightAll();
 }
 
-function addFinalAnswer(content, tokens) {
-  const tokenHtml = tokens ? `
-    <div class="token-info">
-      <span>추정 입력 토큰: <span class="token-val">${tokens.estimated_input.toLocaleString()}</span></span>
-      <span>파이프라인 토큰: <span class="token-val">${tokens.estimated_pipeline.toLocaleString()}</span></span>
-      <span style="color:var(--gemini)">비용: $0</span>
-    </div>
-  ` : '';
+// ✅ 수정: solo_mode 여부에 따라 라벨/토큰 표시 다르게
+function addFinalAnswer(content, tokens, soloMode) {
+  const label = soloMode
+    ? 'GEMINI 2.5 FLASH — 단독 답변 (Qwen 불가)'
+    : 'GEMINI 2.5 FLASH — 최종 검토';
+
+  let tokenHtml = '';
+  if (tokens && !soloMode) {
+    tokenHtml = `
+      <div class="token-info">
+        <span>추정 입력 토큰: <span class="token-val">${tokens.estimated_input.toLocaleString()}</span></span>
+        <span>파이프라인 토큰: <span class="token-val">${tokens.estimated_pipeline.toLocaleString()}</span></span>
+        <span style="color:var(--gemini)">비용: $0</span>
+      </div>
+    `;
+  } else if (tokens && soloMode) {
+    tokenHtml = `
+      <div class="token-info">
+        <span>추정 입력 토큰: <span class="token-val">${tokens.estimated_input.toLocaleString()}</span></span>
+        <span style="color:var(--warning)">Gemini 단독 모드</span>
+        <span style="color:var(--gemini)">비용: $0</span>
+      </div>
+    `;
+  }
 
   const wrap = document.createElement('div');
   wrap.className = 'msg-wrap';
   wrap.innerHTML = `
-    <div class="msg-label label-gemini">GEMINI 2.5 FLASH — 최종 검토</div>
+    <div class="msg-label label-gemini">${label}</div>
     <div class="msg-bubble bubble-gemini">${renderMarkdown(content)}</div>
     ${tokenHtml}
   `;
@@ -595,16 +560,12 @@ function addFinalAnswer(content, tokens) {
 function addSystemMessage(text, type = 'system') {
   const wrap = document.createElement('div');
   wrap.className = 'msg-wrap';
-  wrap.innerHTML = `
-    <div class="msg-bubble bubble-${type}">${escapeHtml(text)}</div>
-  `;
+  wrap.innerHTML = `<div class="msg-bubble bubble-${type}">${escapeHtml(text)}</div>`;
   chatEl.appendChild(wrap);
   scrollToBottom();
 }
 
-function renderMarkdown(text) {
-  return marked.parse(text || '');
-}
+function renderMarkdown(text) { return marked.parse(text || ''); }
 
 function escapeHtml(text) {
   return text
@@ -667,18 +628,28 @@ async function sendMessage() {
 
           if (event.stage === 'qwen_start' || event.stage === 'gemini_start') {
             updateStage(event.stage);
+
           } else if (event.stage === 'qwen_done') {
             updateStage('qwen_done');
             addQwenDraft(event.draft);
+
+          // ✅ 추가: Qwen 실패 이벤트 처리
+          } else if (event.stage === 'qwen_failed') {
+            updateStage('qwen_failed');
+            addSystemMessage(event.message);
+
           } else if (event.stage === 'pipeline_limit') {
             updateStage('done');
             addSystemMessage(event.message);
-            addFinalAnswer(event.final, null);
+            addFinalAnswer(event.final, null, false);
             finalContent = event.final;
+
           } else if (event.stage === 'done') {
             updateStage('done');
-            addFinalAnswer(event.final, event.tokens);
+            // ✅ 수정: solo_mode 플래그 전달
+            addFinalAnswer(event.final, event.tokens, event.solo_mode || false);
             finalContent = event.final;
+
           } else if (event.stage === 'error') {
             addSystemMessage(event.error, 'error');
           }
@@ -687,7 +658,6 @@ async function sendMessage() {
     }
 
     statusEl.remove();
-
     if (finalContent) {
       conversationHistory.push({ role: 'assistant', content: finalContent });
     }

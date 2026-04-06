@@ -84,6 +84,7 @@ function estimateTokens(text) {
 const QWEN_MODELS = [
   'qwen/qwen3.6-plus:free',
   'qwen/qwen3.6-plus-preview:free',
+  'qwen/qwen3-coder:free',
   'qwen/qwen3-235b-a22b:free',
   'qwen/qwen3-30b-a3b:free',
 ];
@@ -113,7 +114,7 @@ async function callQwen(messages) {
 
     const errText = await res.text();
     // 404(모델없음) 또는 503(사용불가)이면 다음 모델 시도
-    if (res.status === 404 || res.status === 503) {
+    if (res.status === 404 || res.status === 503 || res.status === 429) {
       lastError = `${model} 사용불가 (${res.status})`;
       continue;
     }

@@ -1,3 +1,6 @@
+// ✅ Edge Runtime — 진짜 스트리밍 지원 (버퍼링 없음)
+export const config = { runtime: 'edge' };
+
 const QWEN_SYSTEM = `당신은 10년 이상 경력의 시니어 소프트웨어 엔지니어입니다.
 
 [언어 규칙]
@@ -75,12 +78,10 @@ function addReminder(message) {
 - 코드 주석은 기본 한국어`;
 }
 
-// 토큰 수 추정 (한영 혼용 기준)
 function estimateTokens(text) {
   return Math.ceil(text.length / 3);
 }
 
-// 순서대로 시도할 무료 Qwen 모델 목록
 const QWEN_MODELS = [
   'qwen/qwen3.6-plus:free',
   'qwen/qwen3.6-plus-preview:free',
@@ -89,21 +90,25 @@ const QWEN_MODELS = [
   'qwen/qwen3-30b-a3b:free',
 ];
 
-async function callQwen(messages) {
-  let lastError = null;
+// SSE 이벤트 문자열 생성 헬퍼
+function sseEvent(data) {
+  return `data: ${JSON.stringify(data)}\n\n`;
+}
 
+async function callQwen(messages, apiKey, referer) {
+  let lastError = null;
   for (const model of QWEN_MODELS) {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': process.env.VERCEL_URL || 'http://localhost:3000',
+        'HTTP-Referer': referer || 'http://localhost:3000',
       },
       body: JSON.stringify({
         model,
         messages,
-        max_tokens: 4000,
+        max_tokens: 8000, // ✅ 긴 코드 생성을 위해 증가
       })
     });
 
@@ -112,30 +117,26 @@ async function callQwen(messages) {
       return data.choices[0].message.content;
     }
 
-    const errText = await res.text();
-    // 404(모델없음) 또는 503(사용불가)이면 다음 모델 시도
     if (res.status === 404 || res.status === 503 || res.status === 429) {
       lastError = `${model} 사용불가 (${res.status})`;
       continue;
     }
-
-    // 401(인증오류) 등 다른 에러는 즉시 throw
+    const errText = await res.text();
     throw new Error(`Qwen 오류: ${res.status} - ${errText}`);
   }
-
   throw new Error(`모든 Qwen 모델 사용불가. 마지막 오류: ${lastError}`);
 }
 
-async function callGemini(systemPrompt, userMessage) {
+async function callGemini(systemPrompt, userMessage, apiKey) {
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ parts: [{ text: userMessage }] }],
-        generationConfig: { maxOutputTokens: 4000 }
+        generationConfig: { maxOutputTokens: 8000 } // ✅ 긴 코드 생성을 위해 증가
       })
     }
   );
@@ -149,69 +150,91 @@ async function callGemini(systemPrompt, userMessage) {
   return data.candidates[0].content.parts[0].text;
 }
 
-export default async function handler(req, res) {
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: '허용되지 않는 메서드' });
-
-  const { messages } = req.body;
-
-  if (!messages || !Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).json({ error: '메시지가 없습니다' });
-  }
-
-  const userMessage = messages[messages.length - 1].content;
-
-  // 토큰 제한 체크
-  const inputTokens = estimateTokens(JSON.stringify(messages));
-  if (inputTokens > 30000) {
-    return res.status(400).json({
-      error: `입력이 너무 깁니다 (추정 ${inputTokens} 토큰). 대화를 새로 시작하거나 내용을 줄여주세요.`
+// ✅ Edge Runtime 핸들러 — Response + ReadableStream 사용
+export default async function handler(req) {
+  // CORS preflight
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      }
     });
   }
 
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: '허용되지 않는 메서드' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  let body;
   try {
-    // SSE 스트리밍 설정
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
+    body = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ error: '잘못된 JSON' }), { status: 400 });
+  }
 
-    const sendEvent = (data) => {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    };
+  const { messages } = body;
 
-    // 1단계: Qwen CoT
-    sendEvent({ stage: 'qwen_start', message: '🧠 Qwen 분석 중...' });
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return new Response(JSON.stringify({ error: '메시지가 없습니다' }), { status: 400 });
+  }
 
-    const qwenMessages = [
-      { role: 'system', content: QWEN_SYSTEM },
-      ...messages.slice(0, -1),
-      { role: 'user', content: addReminder(userMessage) }
-    ];
+  const inputTokens = estimateTokens(JSON.stringify(messages));
+  if (inputTokens > 30000) {
+    return new Response(JSON.stringify({
+      error: `입력이 너무 깁니다 (추정 ${inputTokens} 토큰). 대화를 새로 시작하거나 내용을 줄여주세요.`
+    }), { status: 400 });
+  }
 
-    const qwenDraft = await callQwen(qwenMessages);
-    sendEvent({ stage: 'qwen_done', draft: qwenDraft });
+  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  const referer = req.headers.get('origin') || 'http://localhost:3000';
+  const userMessage = messages[messages.length - 1].content;
 
-    // 파이프라인 토큰 체크
-    const pipelineTokens = estimateTokens(qwenDraft + userMessage);
-    if (pipelineTokens > 80000) {
-      sendEvent({
-        stage: 'pipeline_limit',
-        message: '⚠️ 토큰 한도 초과 — Qwen 결과만 반환합니다',
-        final: qwenDraft
-      });
-      res.write('data: [DONE]\n\n');
-      return res.end();
-    }
+  // ✅ ReadableStream으로 진짜 SSE 스트리밍
+  const stream = new ReadableStream({
+    async start(controller) {
+      const enc = new TextEncoder();
 
-    // 2단계: Gemini CoT 검토
-    sendEvent({ stage: 'gemini_start', message: '🔍 Gemini 검토 중...' });
+      const send = (data) => {
+        controller.enqueue(enc.encode(sseEvent(data)));
+      };
 
-    const geminiInput = addReminder(`
+      try {
+        // 1단계: Qwen CoT
+        send({ stage: 'qwen_start', message: '🧠 Qwen 분석 중...' });
+
+        const qwenMessages = [
+          { role: 'system', content: QWEN_SYSTEM },
+          ...messages.slice(0, -1),
+          { role: 'user', content: addReminder(userMessage) }
+        ];
+
+        const qwenDraft = await callQwen(qwenMessages, OPENROUTER_API_KEY, referer);
+        send({ stage: 'qwen_done', draft: qwenDraft });
+
+        // 파이프라인 토큰 체크
+        const pipelineTokens = estimateTokens(qwenDraft + userMessage);
+        if (pipelineTokens > 80000) {
+          send({
+            stage: 'pipeline_limit',
+            message: '⚠️ 토큰 한도 초과 — Qwen 결과만 반환합니다',
+            final: qwenDraft
+          });
+          controller.enqueue(enc.encode('data: [DONE]\n\n'));
+          controller.close();
+          return;
+        }
+
+        // 2단계: Gemini CoT 검토
+        send({ stage: 'gemini_start', message: '🔍 Gemini 검토 중...' });
+
+        const geminiInput = addReminder(`
 원본 요청:
 ${userMessage}
 
@@ -220,24 +243,32 @@ ${qwenDraft}
 
 위 초안을 검토하고 개선해줘.`);
 
-    const finalAnswer = await callGemini(GEMINI_SYSTEM, geminiInput);
+        const finalAnswer = await callGemini(GEMINI_SYSTEM, geminiInput, GEMINI_API_KEY);
 
-    sendEvent({
-      stage: 'done',
-      final: finalAnswer,
-      tokens: {
-        estimated_input: inputTokens,
-        estimated_pipeline: pipelineTokens
+        send({
+          stage: 'done',
+          final: finalAnswer,
+          tokens: {
+            estimated_input: inputTokens,
+            estimated_pipeline: pipelineTokens
+          }
+        });
+
+      } catch (err) {
+        send({ stage: 'error', error: err.message });
       }
-    });
 
-    res.write('data: [DONE]\n\n');
-    res.end();
+      controller.enqueue(enc.encode('data: [DONE]\n\n'));
+      controller.close();
+    }
+  });
 
-  } catch (err) {
-    console.error(err);
-    res.write(`data: ${JSON.stringify({ stage: 'error', error: err.message })}\n\n`);
-    res.write('data: [DONE]\n\n');
-    res.end();
-  }
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    }
+  });
 }

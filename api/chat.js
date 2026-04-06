@@ -80,28 +80,49 @@ function estimateTokens(text) {
   return Math.ceil(text.length / 3);
 }
 
-async function callQwen(messages) {
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': process.env.VERCEL_URL || 'http://localhost:3000',
-    },
-    body: JSON.stringify({
-      model: 'qwen/qwen3.6-plus-preview:free',
-      messages,
-      max_tokens: 4000,
-    })
-  });
+// 순서대로 시도할 무료 Qwen 모델 목록
+const QWEN_MODELS = [
+  'qwen/qwen3.6-plus:free',
+  'qwen/qwen3.6-plus-preview:free',
+  'qwen/qwen3-235b-a22b:free',
+  'qwen/qwen3-30b-a3b:free',
+];
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Qwen 오류: ${res.status} - ${err}`);
+async function callQwen(messages) {
+  let lastError = null;
+
+  for (const model of QWEN_MODELS) {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.VERCEL_URL || 'http://localhost:3000',
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        max_tokens: 4000,
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      return data.choices[0].message.content;
+    }
+
+    const errText = await res.text();
+    // 404(모델없음) 또는 503(사용불가)이면 다음 모델 시도
+    if (res.status === 404 || res.status === 503) {
+      lastError = `${model} 사용불가 (${res.status})`;
+      continue;
+    }
+
+    // 401(인증오류) 등 다른 에러는 즉시 throw
+    throw new Error(`Qwen 오류: ${res.status} - ${errText}`);
   }
 
-  const data = await res.json();
-  return data.choices[0].message.content;
+  throw new Error(`모든 Qwen 모델 사용불가. 마지막 오류: ${lastError}`);
 }
 
 async function callGemini(systemPrompt, userMessage) {

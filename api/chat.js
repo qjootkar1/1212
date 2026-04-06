@@ -1,77 +1,89 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
 export const config = { runtime: 'edge' };
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-const QWEN_SYSTEM = `당신은 시니어 개발자입니다. 사용자 요청에 대해 구현해야 할 핵심 로직과 주의사항을 3줄 이내로 요약하세요.`;
-const GEMINI_SYSTEM = `당신은 10년 경력의 시니어 엔지니어입니다. 
-전달받은 가이드를 바탕으로 사용자의 요구사항을 완벽하게 충족하는 '매우 상세하고 긴' 전체 코드를 작성하세요. 
-주석을 풍부하게 달고, 테스트 케이스와 실행 방법까지 상세히 포함하세요.`;
-
-async function getQwenDraft(messages, apiKey, referer) {
+async function getQwenGuide(userMessage, apiKey) {
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': referer,
       },
       body: JSON.stringify({
         model: 'qwen/qwen-2.5-72b-instruct:free',
-        messages,
-        max_tokens: 300,
-        temperature: 0.3,
+        messages: [
+          { role: 'system', content: '시니어 개발자로서 요청에 대한 핵심 설계 구조를 3줄 내외로 요약하세요.' },
+          { role: 'user', content: userMessage }
+        ],
+        max_tokens: 200
       }),
     });
-    if (res.ok) {
-      const data = await res.json();
-      return data.choices[0].message.content;
-    }
-  } catch (e) { return "직접 상세 구현 필요"; }
-  return "직접 상세 구현 필요";
+    const data = await res.json();
+    return data.choices[0].message.content;
+  } catch (e) { return "직접 상세 구현 시작"; }
 }
 
 export default async function handler(req) {
+  if (req.method === 'OPTIONS') return new Response(null, { status: 200 });
+
   const { messages } = await req.json();
   const userMessage = messages[messages.length - 1].content;
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-  const referer = req.headers.get('origin') || 'http://localhost:3000';
 
   const stream = new ReadableStream({
     async start(controller) {
-      const enc = new TextEncoder();
-      const send = (data) => controller.enqueue(enc.encode(`data: ${JSON.stringify(data)}\n\n`));
+      const encoder = new TextEncoder();
+      const send = (data) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
 
       try {
-        send({ stage: 'qwen_start', message: '🏗️ 설계 중...' });
-        const qwenGuide = await getQwenDraft([{ role: 'system', content: QWEN_SYSTEM }, { role: 'user', content: userMessage }], OPENROUTER_API_KEY, referer);
+        // 1단계: Qwen 설계
+        send({ stage: 'qwen_start' });
+        const guide = await getQwenGuide(userMessage, OPENROUTER_API_KEY);
 
-        send({ stage: 'gemini_start', message: '🚀 코드 스트리밍 중...' });
-        
-        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-        const result = await model.generateContentStream({
-          contents: [{ role: 'user', parts: [{ text: `${GEMINI_SYSTEM}\n\n요청: ${userMessage}\n가이드: ${qwenGuide}` }] }],
-        });
+        // 2단계: Gemini 스트리밍 (잘림 방지 핵심)
+        send({ stage: 'gemini_start' });
+        const geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: `설계 가이드: ${guide}\n\n사용자 요청: ${userMessage}\n\n위 내용을 바탕으로 실무에서 즉시 사용 가능한 전체 코드를 아주 상세하고 길게 작성하세요.` }] }]
+            }),
+          }
+        );
 
-        let fullText = "";
-        for await (const chunk of result.stream) {
-          const chunkText = chunk.text();
-          fullText += chunkText;
-          send({ stage: 'streaming', chunk: chunkText });
+        const reader = geminiRes.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const parsed = JSON.parse(line.slice(6));
+                const text = parsed.candidates[0].content.parts[0].text;
+                send({ stage: 'streaming', chunk: text });
+              } catch (e) { continue; }
+            }
+          }
         }
-
-        send({ stage: 'done', final: fullText });
+        send({ stage: 'done' });
       } catch (err) {
         send({ stage: 'error', error: err.message });
       }
-      controller.enqueue(enc.encode('data: [DONE]\n\n'));
       controller.close();
     }
   });
 
-  return new Response(stream, {
-    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' }
+  return new Response(stream, { 
+    headers: { 
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    } 
   });
 }
